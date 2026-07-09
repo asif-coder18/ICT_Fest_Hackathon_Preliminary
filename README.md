@@ -174,6 +174,8 @@ Open **http://localhost:8000** — you will be redirected to the Swagger UI auto
 
 ## API Reference
 
+**Live API:** [https://ict-fest-hackathon-preliminary-1udv.onrender.com/docs](https://ict-fest-hackathon-preliminary-1udv.onrender.com/docs)
+
 Interactive docs: **http://localhost:8000/docs** (Swagger UI) · **http://localhost:8000/redoc** (ReDoc)
 
 ### Authentication
