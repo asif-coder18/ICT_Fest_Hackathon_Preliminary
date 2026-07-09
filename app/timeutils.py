@@ -5,12 +5,15 @@ from datetime import datetime, timezone
 def parse_input_datetime(value: str) -> datetime:
     """Parse an ISO 8601 datetime into a naive UTC datetime for storage.
 
-    Inputs that carry a UTC offset are normalized to UTC; naive inputs are
-    treated as UTC as-is.
+    Inputs that carry a UTC offset are normalized to UTC first, then the
+    tzinfo is stripped for consistent naive-UTC storage.
+    Naive inputs are treated as UTC as-is.
     """
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is not None:
-        dt = dt.replace(tzinfo=None)
+        # FIX #24: was dt.replace(tzinfo=None) which dropped the offset without
+        # converting — e.g. 14:00+05:30 was stored as 14:00 instead of 08:30.
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
 
 

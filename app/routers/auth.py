@@ -10,6 +10,8 @@ from ..auth import (
     hash_password,
     revoke_access_token,
     verify_password,
+    _revoked_tokens,
+    _revoked_tokens_lock,
 )
 from ..database import get_db
 from ..errors import AppError
@@ -21,26 +23,33 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register", status_code=201)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    # FIX #4 (Race condition): wrap org creation + user check in a single
+    # try/except so concurrent registrations with the same org_name don't
+    # both pass the "org is None" check and double-insert.
     org = db.query(Organization).filter(Organization.name == payload.org_name).first()
     role = "admin" if org is None else "member"
     if org is None:
-        org = Organization(name=payload.org_name)
-        db.add(org)
-        db.commit()
-        db.refresh(org)
+        try:
+            org = Organization(name=payload.org_name)
+            db.add(org)
+            db.commit()
+            db.refresh(org)
+        except Exception:
+            db.rollback()
+            # Another request won the race — fetch the existing org.
+            org = db.query(Organization).filter(Organization.name == payload.org_name).first()
+            if org is None:
+                raise
+            role = "member"
 
     existing = (
         db.query(User)
         .filter(User.org_id == org.id, User.username == payload.username)
         .first()
     )
+    # FIX #5: was silently returning existing user data — raise 409 instead.
     if existing is not None:
-        return {
-            "user_id": existing.id,
-            "org_id": org.id,
-            "username": existing.username,
-            "role": existing.role,
-        }
+        raise AppError(409, "USERNAME_TAKEN", "Username already registered in this organisation")
 
     user = User(
         org_id=org.id,
@@ -83,6 +92,12 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     data = decode_token(payload.refresh_token)
     if data.get("type") != "refresh":
         raise AppError(401, "UNAUTHORIZED", "Wrong token type")
+    # FIX #6: invalidate the used refresh token so it cannot be reused.
+    with _revoked_tokens_lock:
+        jti = data.get("jti", "")
+        if jti in _revoked_tokens:
+            raise AppError(401, "UNAUTHORIZED", "Refresh token has already been used")
+        _revoked_tokens.add(jti)
     user = db.query(User).filter(User.id == int(data["sub"])).first()
     if user is None:
         raise AppError(401, "UNAUTHORIZED", "Unknown user")

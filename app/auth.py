@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import os
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -21,7 +22,9 @@ from .models import User
 
 # Access tokens presented to /auth/logout are recorded here so they can no
 # longer be used.
+# FIX #3: protect the set with a lock for thread safety.
 _revoked_tokens: set[str] = set()
+_revoked_tokens_lock = threading.Lock()
 
 _PBKDF2_ROUNDS = 100_000
 
@@ -47,7 +50,9 @@ def _now_ts() -> int:
 
 def create_access_token(user: User) -> str:
     iat = _now_ts()
-    lifetime = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+    # FIX #1: was timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES * 60) — the *60
+    # turned 15 minutes into 15 hours. Use minutes directly.
+    lifetime = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": str(user.id),
         "org": user.org_id,
@@ -83,7 +88,9 @@ def decode_token(token: str) -> dict:
 
 
 def revoke_access_token(payload: dict) -> None:
-    _revoked_tokens.add(payload["jti"])
+    # FIX #3: lock before mutating the shared set.
+    with _revoked_tokens_lock:
+        _revoked_tokens.add(payload["jti"])
 
 
 def get_token_payload(request: Request) -> dict:
@@ -94,7 +101,10 @@ def get_token_payload(request: Request) -> dict:
     payload = decode_token(token)
     if payload.get("type") != "access":
         raise AppError(401, "UNAUTHORIZED", "Wrong token type")
-    if payload.get("sub") in _revoked_tokens:
+    # FIX #2: was checking payload["sub"] against the jti set — should check jti.
+    with _revoked_tokens_lock:
+        revoked = payload.get("jti") in _revoked_tokens
+    if revoked:
         raise AppError(401, "UNAUTHORIZED", "Token has been revoked")
     return payload
 

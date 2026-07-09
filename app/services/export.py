@@ -19,11 +19,13 @@ EXPORT_HEADER = [
 ]
 
 
-def fetch_bookings_raw(db: Session, room_id: int) -> list[Booking]:
-    """Load every booking for a single room, ordered by id."""
+def fetch_bookings_raw(db: Session, room_id: int, org_id: int) -> list[Booking]:
+    """Load every booking for a single room scoped to the given org, ordered by id."""
+    # FIX #22: added org_id join so an admin can only export rooms in their org.
     return (
         db.query(Booking)
-        .filter(Booking.room_id == room_id)
+        .join(Room, Booking.room_id == Room.id)
+        .filter(Booking.room_id == room_id, Room.org_id == org_id)
         .order_by(Booking.id.asc())
         .all()
     )
@@ -47,7 +49,8 @@ def generate_export(
 ) -> str:
     if include_all:
         if room_id is not None:
-            rows = fetch_bookings_raw(db, room_id)
+            # FIX #22: pass org_id so the query is properly scoped.
+            rows = fetch_bookings_raw(db, room_id, org_id)
         else:
             rows = _fetch_scoped(db, org_id, None, None)
     else:

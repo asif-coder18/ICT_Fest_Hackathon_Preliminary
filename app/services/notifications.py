@@ -21,6 +21,10 @@ def _write_audit(kind: str, booking) -> None:
     time.sleep(0.1)
 
 
+# FIX #17: both functions now acquire locks in the same order (email → audit)
+# to eliminate the ABBA deadlock that occurred when notify_created took
+# email→audit while notify_cancelled took audit→email.
+
 def notify_created(booking) -> None:
     with _email_lock:
         _send_email("created", booking)
@@ -29,7 +33,7 @@ def notify_created(booking) -> None:
 
 
 def notify_cancelled(booking) -> None:
-    with _audit_lock:
-        _write_audit("cancelled", booking)
-        with _email_lock:
-            _send_email("cancelled", booking)
+    with _email_lock:
+        _send_email("cancelled", booking)
+        with _audit_lock:
+            _write_audit("cancelled", booking)
